@@ -10,7 +10,7 @@ import "./Ownable.sol";
 import "./SafeMath.sol";
 import "./ERC20Interface.sol";
 
-contract CrpytoProtect is Ownable {
+contract CryptoProtect is Ownable {
     using SafeMath for uint256;
     
     ERC20Interface tokenInterface;
@@ -20,22 +20,18 @@ contract CrpytoProtect is Ownable {
     // 2 - inactive
     // 3 - claimed
     struct Policy {
-        string name;
         uint256 premiumAmount;
         uint256 payoutAmount;
-        uint256 startDate;
         uint256 endDate;
         uint8 state;
     }
     
     struct Token {
         mapping (string => Policy) token;
-        string[] tokenRecords;
     }
     
     struct Exchange {
         mapping (string => Token) exchange;
-        string[] exchangeRecords;
     }
     
     struct Pool{
@@ -44,9 +40,6 @@ contract CrpytoProtect is Ownable {
     }
     
     mapping(address => Exchange) policies;
-    mapping(address => Exchange) claims;
-    
-    // address[]           private addressRecords; // temp
     
     Pool[]              private poolRecords;
     uint                private poolRecordsIndex;
@@ -62,6 +55,8 @@ contract CrpytoProtect is Ownable {
     uint256             public minPremium;
     uint256             public maxPremium;
     
+    string             public contractName;
+    
     event PoolStateUpdate(uint8 indexed state);
     event PremiumReceived(address indexed addr, uint256 indexed amount, uint indexed id);
     event ClaimSubmitted(address indexed addr, string indexed exchange, string indexed token);
@@ -70,6 +65,7 @@ contract CrpytoProtect is Ownable {
     event PoolPremiumLimitUpdate(uint256 indexed min, uint256 indexed max);
 
     constructor(
+        string _contractName,
         address _tokenContract,
         uint256 _poolMaxAmount,
         uint256 _poolBackedAmount,
@@ -78,6 +74,7 @@ contract CrpytoProtect is Ownable {
     )
         public
     {
+        contractName = _contractName;
         tokenInterface = ERC20Interface(_tokenContract);
         
         poolState = 1;
@@ -149,7 +146,6 @@ contract CrpytoProtect is Ownable {
         verifyPoolState()
     {
         // check parameters
-        require(_tokenOwner != address(this));
         require(_tokenOwner != address(0));
         
         require(_premiumAmount < _payoutAmount);
@@ -160,8 +156,7 @@ contract CrpytoProtect is Ownable {
         require(bytes(_token).length > 0);
         require(_id > 0);
         
-        // in order to reduce cost
-        // require(computePoolAmount() < poolMaxAmount);
+        // require(computePoolAmount() < poolMaxAmount); // reduce cost
         
         // check eligibility
         require(isEligible(_tokenOwner, _exchange, _token));
@@ -171,26 +166,16 @@ contract CrpytoProtect is Ownable {
         require(tokenInterface.allowance(_tokenOwner, address(this)) >= _premiumAmount);
         
         // record data
-        policies[_tokenOwner].exchange[_exchange].token[_token].name = _token;
         policies[_tokenOwner].exchange[_exchange].token[_token].premiumAmount = _premiumAmount;
         policies[_tokenOwner].exchange[_exchange].token[_token].payoutAmount = _payoutAmount;
-        policies[_tokenOwner].exchange[_exchange].token[_token].startDate = now;
         policies[_tokenOwner].exchange[_exchange].token[_token].endDate = now.add(90 * 1 days);
         policies[_tokenOwner].exchange[_exchange].token[_token].state = 1;
         
-        // addressRecords.push(_tokenOwner); // temp
-        policies[_tokenOwner].exchangeRecords.push(_exchange);
-        policies[_tokenOwner].exchange[_exchange].tokenRecords.push(_exchange);
-        
         // record pool
-        Pool memory thisPool = Pool(now.add(90 * 1 days), _premiumAmount);
-        poolRecords.push(thisPool);
+        poolRecords.push(Pool(now.add(90 * 1 days), _premiumAmount));
         
         // transfer amount
         tokenInterface.transferFrom(_tokenOwner, address(this), _premiumAmount);
-        
-        // transfer to owner
-        assert(tokenInterface.transfer(owner, _premiumAmount));
         
         emit PremiumReceived(_tokenOwner, _premiumAmount, _id);
     }
@@ -200,19 +185,15 @@ contract CrpytoProtect is Ownable {
      */
     function GetPolicy(address _addr, string _exchange, string _token) public view 
         returns (
-            string name,
             uint256 premiumAmount,
             uint256 payoutAmount,
-            uint256 startDate,
             uint256 endDate,
             uint8 state
         )
     {
         return (
-            policies[_addr].exchange[_exchange].token[_token].name,
             policies[_addr].exchange[_exchange].token[_token].premiumAmount,
             policies[_addr].exchange[_exchange].token[_token].payoutAmount,
-            policies[_addr].exchange[_exchange].token[_token].startDate,
             policies[_addr].exchange[_exchange].token[_token].endDate,
             policies[_addr].exchange[_exchange].token[_token].state
         );
@@ -239,6 +220,29 @@ contract CrpytoProtect is Ownable {
         returns (uint256)
     {
         return computePoolAmount();
+    }
+    
+    /**
+     * @dev Check Eligibility
+     */
+    function CheckEligibility(address _addr, string _exchange, string _token) public view
+        returns (bool) 
+    {
+        return(isEligible(_addr, _exchange, _token));
+    }
+    
+    /**
+     * @dev Check Token Balance
+     */
+    function CheckBalance(address _addr) public view returns (uint256){
+        return tokenInterface.balanceOf(_addr);
+    }
+    
+    /**
+     * @dev Check Token Allowance
+     */
+    function CheckAllowance(address _addr) public view returns (uint256){
+        return tokenInterface.allowance(_addr, address(this));
     }
     
     /**
@@ -290,6 +294,33 @@ contract CrpytoProtect is Ownable {
     }
     
     /**
+     * @dev Initiate Payout
+     */
+    function InitiatePayout(address _addr, string _exchange, string _token) external
+        onlyOwner
+    {
+        require(policies[_addr].exchange[_exchange].token[_token].state == 1);
+        require(policies[_addr].exchange[_exchange].token[_token].payoutAmount > 0);
+        
+        uint256 payoutAmount = policies[_addr].exchange[_exchange].token[_token].payoutAmount;
+        require(payoutAmount <= tokenInterface.balanceOf(address(this)));
+        
+        tokenInterface.transfer(_addr, payoutAmount);
+        
+        emit ClaimPayout(_addr, _exchange, _token);
+    }
+    
+    /**
+     * @dev Withdraw Fee
+     */
+    function WithdrawFee(uint256 _amount) external
+        onlyOwner
+    {
+        require(_amount <= tokenInterface.balanceOf(address(this)));
+        tokenInterface.transfer(owner, _amount);
+    }
+    
+    /**
      * @dev Emergency Drain
      * in case something went wrong and token is stuck in contract
      */
@@ -301,8 +332,8 @@ contract CrpytoProtect is Ownable {
             owner.transfer(address(this).balance);
         }
         
-        if (_anyToken != address(0x0)) {
-            assert(_anyToken.transfer(owner, _anyToken.balanceOf(this)));
+        if (_anyToken != address(0)) {
+            _anyToken.transfer(owner, _anyToken.balanceOf(this));
         }
         return true;
     }
