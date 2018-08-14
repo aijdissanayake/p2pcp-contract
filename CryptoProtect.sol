@@ -44,7 +44,9 @@ contract CrpytoProtect is Ownable {
     }
     
     mapping(address => Exchange) policies;
-    address[]           private addressRecords;
+    mapping(address => Exchange) claims;
+    
+    // address[]           private addressRecords; // temp
     
     Pool[]              private poolRecords;
     uint                private poolRecordsIndex;
@@ -57,18 +59,22 @@ contract CrpytoProtect is Ownable {
     uint256             public poolMaxAmount;
     uint256             public poolStartDate;
     
-    uint256             public minContribution;
-    uint256             public maxContribution;
+    uint256             public minPremium;
+    uint256             public maxPremium;
     
-    event PoolStateUpdate(string indexed message);
+    event PoolStateUpdate(uint8 indexed state);
     event PremiumReceived(address indexed addr, uint256 indexed amount, uint indexed id);
-    
+    event ClaimSubmitted(address indexed addr, string indexed exchange, string indexed token);
+    event ClaimPayout(address indexed addr, string indexed exchange, string indexed token);
+    event PoolBackedAmountUpdate(uint256 indexed amount);
+    event PoolPremiumLimitUpdate(uint256 indexed min, uint256 indexed max);
+
     constructor(
         address _tokenContract,
         uint256 _poolMaxAmount,
         uint256 _poolBackedAmount,
-        uint256 _minContribution,
-        uint256 _maxContribution
+        uint256 _minPremium,
+        uint256 _maxPremium
     )
         public
     {
@@ -79,21 +85,32 @@ contract CrpytoProtect is Ownable {
         poolMaxAmount = _poolMaxAmount;
         poolBackedAmount = _poolBackedAmount;
         
-        minContribution = _minContribution;
-        maxContribution = _maxContribution;
+        minPremium = _minPremium;
+        maxPremium = _maxPremium;
     }
     
     /**
      * @dev Modifier to check pool state
      */
-    modifier verifyPoolState(uint256 _premiumAmount) {
+    modifier verifyPoolState() {
         require(poolState == 1);
-        require(_premiumAmount >= minContribution);
-        require(_premiumAmount <= maxContribution);
-        
-        // in order to reduce cost
-        // require(computePoolAmount() < poolMaxAmount);
         _;
+    }
+    
+    /**
+     * @dev Check policy eligibility
+     */
+    function isEligible(address _addr, string _exchange, string _token) internal view 
+        returns (bool)
+    {
+        if (
+            policies[_addr].exchange[_exchange].token[_token].state == 0 ||
+            policies[_addr].exchange[_exchange].token[_token].endDate < now
+        ) {
+            return true;
+        }
+        
+        return false;
     }
     
     /**
@@ -103,6 +120,8 @@ contract CrpytoProtect is Ownable {
         returns (uint256)
     {
         uint256 currentPoolAmount = 0;
+        
+        // limited by gas
         for (uint i = poolRecordsIndex; i< poolRecords.length; i++) {
             if (poolRecords[i].endDate < now) {
                 continue;
@@ -127,17 +146,25 @@ contract CrpytoProtect is Ownable {
         uint8 _id
     ) 
         external
-        verifyPoolState(_premiumAmount)
+        verifyPoolState()
     {
         // check parameters
         require(_tokenOwner != address(this));
         require(_tokenOwner != address(0));
+        
         require(_premiumAmount < _payoutAmount);
+        require(_premiumAmount >= minPremium);
+        require(_premiumAmount <= maxPremium);
+        
         require(bytes(_exchange).length > 0);
         require(bytes(_token).length > 0);
+        require(_id > 0);
+        
+        // in order to reduce cost
+        // require(computePoolAmount() < poolMaxAmount);
         
         // check eligibility
-        require(policies[_tokenOwner].exchange[_exchange].token[_token].state == 0);
+        require(isEligible(_tokenOwner, _exchange, _token));
         
         // check that token owner address has valid amount
         require(tokenInterface.balanceOf(_tokenOwner) >= _premiumAmount);
@@ -151,7 +178,7 @@ contract CrpytoProtect is Ownable {
         policies[_tokenOwner].exchange[_exchange].token[_token].endDate = now.add(90 * 1 days);
         policies[_tokenOwner].exchange[_exchange].token[_token].state = 1;
         
-        addressRecords.push(_tokenOwner);
+        // addressRecords.push(_tokenOwner); // temp
         policies[_tokenOwner].exchangeRecords.push(_exchange);
         policies[_tokenOwner].exchange[_exchange].tokenRecords.push(_exchange);
         
@@ -192,6 +219,20 @@ contract CrpytoProtect is Ownable {
     }
     
     /**
+     * @dev Get Policy
+     */
+    function SubmitClaim(address _addr, string _exchange, string _token) public 
+        returns (bool submitted)
+    {
+        require(policies[_addr].exchange[_exchange].token[_token].state == 1);
+        require(policies[_addr].exchange[_exchange].token[_token].endDate > now);
+        
+        emit ClaimSubmitted(_addr, _exchange, _token);
+        
+        return true;
+    }
+    
+    /**
      * @dev Get Current Pool Amount
      */
     function GetCurrentPoolAmount() public view 
@@ -203,10 +244,25 @@ contract CrpytoProtect is Ownable {
     /**
      * @dev Update Pool State
      */
+    function UpdatePolicyState(address _addr, string _exchange, string _token, uint8 _state) external
+        onlyOwner
+    {
+        require(policies[_addr].exchange[_exchange].token[_token].state != 0);
+        policies[_addr].exchange[_exchange].token[_token].state = _state;
+        
+        if (_state == 3) {
+            emit ClaimPayout(_addr, _exchange, _token);
+        }
+    }
+    
+    /**
+     * @dev Update Pool State
+     */
     function UpdatePoolState(uint8 _state) external
         onlyOwner
     {
         poolState = _state;
+        emit PoolStateUpdate(_state);
     }
     
     /**
@@ -216,17 +272,21 @@ contract CrpytoProtect is Ownable {
         onlyOwner
     {
         poolBackedAmount = _amount;
+        
+        emit PoolBackedAmountUpdate(_amount);
     }
     
     /**
-     * @dev Update Contribution Limit
+     * @dev Update Premium Limit
      */
-    function UpdateContributionLimit(uint256 _min, uint256 _max) external
+    function UpdatePremiumLimit(uint256 _min, uint256 _max) external
         onlyOwner
     {
         require(_min < _max);
-        minContribution = _min;
-        maxContribution = _max;
+        minPremium = _min;
+        maxPremium = _max;
+        
+        emit PoolPremiumLimitUpdate(_min, _max);
     }
     
     /**
