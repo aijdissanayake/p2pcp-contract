@@ -305,6 +305,7 @@ contract CryptoProtect is Ownable {
         uint256 payoutAmount = policies[_addr].exchange[_exchange].token[_token].payoutAmount;
         require(payoutAmount <= tokenInterface.balanceOf(address(this)));
         
+        policies[_addr].exchange[_exchange].token[_token].state = 3;
         tokenInterface.transfer(_addr, payoutAmount);
         
         emit ClaimPayout(_addr, _exchange, _token);
