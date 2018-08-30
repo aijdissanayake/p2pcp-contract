@@ -1,11 +1,7 @@
 # P2PCP Smart Contract
 
-1.  User to call **APPROVE** in *Token Contract* to allow *Contract Address* to spend their token
+Participant contributes desired amount of PAL tokens into a mutual aid pool to get their tokens protected on an exchange for 90 days.
 
-2.  User to call **MakeTransaction** in *Contract Address* with -
-    - `_tokenOwner` (user address)
-    - `_premiumAmount` (payment in wei)
-    - `_payoutAmount` (payout in wei)
-    - `_exchange` (exchange name)
-    - `_token` (token ticker)
-    - `_id` (id in int)
+Smart Contract holds the pool for P2P CryptoProtect and records policy transactions and claims payout.
+
+Address owner must **Approve** P2P CryptoProtect Contract allowance to spend through Token Contract before calling **MakeTransaction**.
